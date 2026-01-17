@@ -1,0 +1,24 @@
+{
+  "name": "uottahack-backend",
+  "version": "1.0.0",
+  "description": "Accessible routing backend for uOttaHack",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node src/server.js",
+    "fetch:opensidewalks": "node scripts/fetch_opensidewalks.js",
+    "process:accessibility": "node scripts/process_accessibility.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "node-fetch": "^2.7.0",
+    "osmtogeojson": "^3.0.0-beta.5"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "^0.9.0"
+  }
+}
