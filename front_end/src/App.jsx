@@ -9,7 +9,8 @@ function App() {
   const [end, setEnd] = useState(null);
   const [profile, setProfile] = useState('wheelchair');
   const [route, setRoute] = useState(null);
-  const [selectionMode, setSelectionMode] = useState(null); // 'start', 'end', or null
+
+  // Selection mode is no longer needed as we use a sequential click logic
 
   const handleSearch = async (query) => {
     return await searchPlace(query);
@@ -27,13 +28,31 @@ function App() {
     }
   };
 
+  // Auto-calculate route when start and end are set
+  React.useEffect(() => {
+    if (start && end) {
+      handleRoute();
+    }
+  }, [start, end, profile]);
+
   const handleMapClick = (latlng) => {
-    if (selectionMode === 'start') {
-      setStart({ lat: latlng.lat, lon: latlng.lng, name: `Map Location (${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)})` });
-      setSelectionMode(null);
-    } else if (selectionMode === 'end') {
-      setEnd({ lat: latlng.lat, lon: latlng.lng, name: `Map Location (${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)})` });
-      setSelectionMode(null);
+    const newPoint = {
+      lat: latlng.lat,
+      lon: latlng.lng,
+      name: `Map Location (${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)})`
+    };
+
+    if (!start) {
+      // First click: Set Start
+      setStart(newPoint);
+    } else if (!end) {
+      // Second click: Set End (triggers useEffect -> route)
+      setEnd(newPoint);
+    } else {
+      // Third click: Reset (New Start, Clear End/Route)
+      setStart(newPoint);
+      setEnd(null);
+      setRoute(null);
     }
   };
 
@@ -48,19 +67,8 @@ function App() {
         setEnd={setEnd}
         profile={profile}
         setProfile={setProfile}
-        selectionMode={selectionMode}
-        setSelectionMode={setSelectionMode}
+      // Removed selectionMode props from Sidebar as they are no longer used for logic
       />
-
-      {selectionMode && (
-        <div style={{
-          position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)',
-          zIndex: 3000, background: '#2c3e50', color: 'white', padding: '10px 20px', borderRadius: '30px',
-          boxShadow: '0 4px 10px rgba(0,0,0,0.3)', fontWeight: 'bold'
-        }}>
-          Click map to set {selectionMode.toUpperCase()}
-        </div>
-      )}
 
       <div style={{ width: '100%', height: '100%', zIndex: 0 }}>
         <MapComponent

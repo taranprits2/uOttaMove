@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const Sidebar = ({ onSearch, onRoute, start, end, setStart, setEnd, profile, setProfile, selectionMode, setSelectionMode }) => {
+const Sidebar = ({ onSearch, onRoute, start, end, setStart, setEnd, profile, setProfile }) => {
     const [isOpen, setIsOpen] = useState(true);
     const [startQuery, setStartQuery] = useState('');
     const [endQuery, setEndQuery] = useState('');
@@ -128,18 +128,6 @@ const Sidebar = ({ onSearch, onRoute, start, end, setStart, setEnd, profile, set
                             placeholder="Search start location..."
                             style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #ced4da' }}
                         />
-                        <button
-                            onClick={() => setSelectionMode('start')}
-                            title="Pick from map"
-                            style={{
-                                background: selectionMode === 'start' ? '#2ecc71' : '#f8f9fa',
-                                color: selectionMode === 'start' ? 'white' : '#666',
-                                border: '1px solid #ced4da', borderRadius: '6px', cursor: 'pointer',
-                                width: '40px'
-                            }}
-                        >
-                            📍
-                        </button>
                     </div>
                     {/* Dropdown for Start */}
                     {startResults.length > 0 && (
@@ -175,18 +163,6 @@ const Sidebar = ({ onSearch, onRoute, start, end, setStart, setEnd, profile, set
                             placeholder="Search destination..."
                             style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #ced4da' }}
                         />
-                        <button
-                            onClick={() => setSelectionMode('end')}
-                            title="Pick from map"
-                            style={{
-                                background: selectionMode === 'end' ? '#e74c3c' : '#f8f9fa',
-                                color: selectionMode === 'end' ? 'white' : '#666',
-                                border: '1px solid #ced4da', borderRadius: '6px', cursor: 'pointer',
-                                width: '40px'
-                            }}
-                        >
-                            📍
-                        </button>
                     </div>
                     {/* Dropdown for End */}
                     {endResults.length > 0 && (
