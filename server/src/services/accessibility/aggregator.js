@@ -84,8 +84,9 @@ function parseWidth(value) {
  * @returns {{score:number,isAccessible:boolean,confidence:string,issues:string[],tags:object}}
  */
 function scoreSegment(properties = {}) {
-  // Rule 1: Default Assumption = Accessible (Unknown != Bad)
-  let score = 1.0;
+  // Rule 1: Default Assumption = Mostly Accessible but Unverified (0.9)
+  // This allows "verified good" (1.0) to stand out from "unknown" (0.9).
+  let score = 0.9;
   const issues = [];
   let signals = 0;
   let positiveSignals = 0;
@@ -109,7 +110,7 @@ function scoreSegment(properties = {}) {
   if (wheelchair) {
     tagsUsed.wheelchair = wheelchair;
     if (wheelchair === 'yes') {
-      apply(0.0, 'wheelchair_yes'); // Confirmed good, maintains 1.0
+      apply(0.1, 'wheelchair_yes'); // Confirmed good, brings 0.9 -> 1.0
       positiveSignals++; // Strong signal
     } else if (wheelchair === 'limited') {
       apply(-0.2, 'wheelchair_limited');
@@ -124,7 +125,7 @@ function scoreSegment(properties = {}) {
     if (typeof kerb === 'string') {
       const value = kerb.toLowerCase();
       if (value.includes('lowered') || value.includes('flush') || value === 'raised:0') {
-        apply(0.0, 'kerb_flush');
+        apply(0.05, 'kerb_flush'); // Bonus check
         positiveSignals++;
       } else if (value.includes('raised') || value.includes('high')) {
         apply(-0.4, 'kerb_high');
@@ -137,7 +138,7 @@ function scoreSegment(properties = {}) {
     tagsUsed.surface = surface;
     const normalizedSurface = surface.toLowerCase();
     if (GOOD_SURFACES.has(normalizedSurface)) {
-      apply(0.0, 'surface_good');
+      apply(0.05, 'surface_good'); // Bonus check
       positiveSignals++; // Weak positive
     } else if (BAD_SURFACES.has(normalizedSurface)) {
       apply(-0.3, `surface_${normalizedSurface}`);
@@ -149,7 +150,7 @@ function scoreSegment(properties = {}) {
     tagsUsed.smoothness = smoothness;
     const normalizedSmoothness = smoothness.toLowerCase();
     if (GOOD_SMOOTHNESS.has(normalizedSmoothness)) {
-      apply(0.0, 'smoothness_good');
+      apply(0.05, 'smoothness_good'); // Bonus check
       positiveSignals++;
     } else if (BAD_SMOOTHNESS.has(normalizedSmoothness)) {
       apply(-0.5, `smoothness_${normalizedSmoothness}`);
@@ -161,7 +162,7 @@ function scoreSegment(properties = {}) {
   if (incline !== null) {
     tagsUsed.incline = inclineRaw;
     if (incline <= 0.06) {
-      apply(0.0, 'incline_good');
+      apply(0.0, 'incline_good'); // No bonus, just not a penalty
     } else if (incline > 0.08) {
       apply(-0.4, 'steep_incline');
     }
@@ -174,7 +175,7 @@ function scoreSegment(properties = {}) {
     if (width < 1.0) { // Relaxed valid width slightly
       apply(-0.3, 'narrow_width');
     } else if (width >= 1.5) {
-      apply(0.0, 'width_good');
+      apply(0.05, 'width_good'); // Bonus for wide paths
     }
   }
 
