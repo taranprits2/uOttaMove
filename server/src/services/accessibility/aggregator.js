@@ -18,7 +18,7 @@ const DEFAULT_RAW_GEOJSON_PATH = path.join(
   'data',
   'raw',
   'opensidewalks',
-  'toronto_sidewalks.geojson',
+  'ottawa_sidewalks.geojson',
 );
 
 /**
@@ -84,36 +84,50 @@ function parseWidth(value) {
  * @returns {{score:number,isAccessible:boolean,confidence:string,issues:string[],tags:object}}
  */
 function scoreSegment(properties = {}) {
-  let score = 0.5;
+  // Rule 1: Default Assumption = Accessible (Unknown != Bad)
+  let score = 1.0;
   const issues = [];
-  const tagsUsed = {};
   let signals = 0;
+  let positiveSignals = 0;
+  let negativeSignals = 0;
+
+  const tagsUsed = {};
+
+  // -- Helper to apply penalty/bonus --
+  const apply = (val, reason) => {
+    score += val;
+    if (val < 0) {
+      issues.push(reason);
+      negativeSignals++;
+    } else if (val > 0) {
+      positiveSignals++;
+    }
+    signals++;
+  };
 
   const wheelchair = properties.wheelchair || properties['sidewalk:wheelchair'];
   if (wheelchair) {
     tagsUsed.wheelchair = wheelchair;
-    signals += 1;
     if (wheelchair === 'yes') {
-      score += 0.35;
+      apply(0.0, 'wheelchair_yes'); // Confirmed good, maintains 1.0
+      positiveSignals++; // Strong signal
     } else if (wheelchair === 'limited') {
-      score += 0.1;
+      apply(-0.2, 'wheelchair_limited');
     } else if (wheelchair === 'no') {
-      score -= 0.6;
-      issues.push('wheelchair_tag=no');
+      apply(-0.8, 'wheelchair_no');
     }
   }
 
   const kerb = properties.kerb || properties['kerb:height'];
   if (kerb) {
     tagsUsed.kerb = kerb;
-    signals += 1;
     if (typeof kerb === 'string') {
       const value = kerb.toLowerCase();
       if (value.includes('lowered') || value.includes('flush') || value === 'raised:0') {
-        score += 0.2;
+        apply(0.0, 'kerb_flush');
+        positiveSignals++;
       } else if (value.includes('raised') || value.includes('high')) {
-        score -= 0.3;
-        issues.push('kerb_high');
+        apply(-0.4, 'kerb_high');
       }
     }
   }
@@ -121,26 +135,24 @@ function scoreSegment(properties = {}) {
   const surface = properties.surface || properties['sidewalk:surface'];
   if (surface) {
     tagsUsed.surface = surface;
-    signals += 1;
     const normalizedSurface = surface.toLowerCase();
     if (GOOD_SURFACES.has(normalizedSurface)) {
-      score += 0.2;
+      apply(0.0, 'surface_good');
+      positiveSignals++; // Weak positive
     } else if (BAD_SURFACES.has(normalizedSurface)) {
-      score -= 0.25;
-      issues.push(`surface_${normalizedSurface}`);
+      apply(-0.3, `surface_${normalizedSurface}`);
     }
   }
 
   const smoothness = properties.smoothness || properties['sidewalk:smoothness'];
   if (smoothness) {
     tagsUsed.smoothness = smoothness;
-    signals += 1;
     const normalizedSmoothness = smoothness.toLowerCase();
     if (GOOD_SMOOTHNESS.has(normalizedSmoothness)) {
-      score += 0.15;
+      apply(0.0, 'smoothness_good');
+      positiveSignals++;
     } else if (BAD_SMOOTHNESS.has(normalizedSmoothness)) {
-      score -= 0.35;
-      issues.push(`smoothness_${normalizedSmoothness}`);
+      apply(-0.5, `smoothness_${normalizedSmoothness}`);
     }
   }
 
@@ -148,12 +160,10 @@ function scoreSegment(properties = {}) {
   const incline = parseIncline(inclineRaw);
   if (incline !== null) {
     tagsUsed.incline = inclineRaw;
-    signals += 1;
     if (incline <= 0.06) {
-      score += 0.1;
+      apply(0.0, 'incline_good');
     } else if (incline > 0.08) {
-      score -= 0.3;
-      issues.push('steep_incline');
+      apply(-0.4, 'steep_incline');
     }
   }
 
@@ -161,39 +171,43 @@ function scoreSegment(properties = {}) {
   const width = parseWidth(widthRaw);
   if (width !== null) {
     tagsUsed.width = widthRaw;
-    signals += 1;
-    if (width < 1.2) {
-      score -= 0.2;
-      issues.push('narrow_width');
-    } else if (width >= 1.8) {
-      score += 0.05;
+    if (width < 1.0) { // Relaxed valid width slightly
+      apply(-0.3, 'narrow_width');
+    } else if (width >= 1.5) {
+      apply(0.0, 'width_good');
     }
   }
 
-  const motorVehicle = properties.motor_vehicle || properties.motorcar;
-  if (motorVehicle === 'no') {
-    score += 0.05;
-  }
-
-  const bicycle = properties.bicycle;
-  if (bicycle === 'yes') {
-    score -= 0.05; // shared paths may be trickier
+  // Explicit Barriers
+  if (properties.highway === 'steps') {
+    apply(-0.9, 'steps');
   }
 
   score = Math.max(0, Math.min(1, score));
 
-  let confidence = 'low';
-  if (signals >= 4) {
-    confidence = 'medium';
-  }
-  if (signals >= 6 || wheelchair === 'yes') {
+  // -- Confidence Logic --
+  // High: Strong positive signals OR explicit confirmation
+  // Medium: Default / Unknown (Neutral)
+  // Low: Explicit negative signals found
+
+  let confidence = 'medium';
+
+  if (positiveSignals >= 2 || (wheelchair === 'yes')) {
     confidence = 'high';
   }
-  if (score <= 0.4) {
-    confidence = 'low';
+
+  // If we found issues, confidence in "accessibility" decreases? 
+  // No, the user wants: "Low: Explicit negative tags"
+  // Actually, wait. The user request said:
+  // "Low: Explicit negative tags (stairs, raised kerbs, steep incline)"
+  // "Medium: Neutral / inferred (no relevant tags)"
+  // "High: Explicit positive tags"
+
+  if (negativeSignals > 0) {
+    confidence = 'low'; // We are confident it is BAD, or effectively "low accessibility confidence"
   }
 
-  const isAccessible = score >= 0.6 && !issues.includes('wheelchair_tag=no');
+  const isAccessible = score >= 0.6; // Threshold for binary "passable"
 
   const relevantTags = {
     highway: properties.highway,

@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { haversineDistance } = require('../../utils/geo');
+const { haversineDistance, projectPointOnSegment, distanceSquared } = require('../../utils/geo');
 
 const PROCESSED_SEGMENTS_PATH = path.join(
   __dirname,
@@ -49,26 +49,47 @@ function computeSegmentLengthMeters(coords) {
 }
 
 function computePenalty(attributes) {
-  let penalty = Math.max(0, 1 - (attributes.accessibility_score ?? 0.5));
+  // Score is now default 1.0 (good), so (1 - score) gives appropriate penalty for bad stuff.
+  let penalty = Math.max(0, 1 - (attributes.accessibility_score ?? 1.0));
+
   const issues = attributes.issues || [];
+
+  // Confidence Penalty Logic:
+  // Low confidence now means "Explicit Negative Tags" found in aggregator, 
+  // so we might not need an extra penalty if the score is already lowered, 
+  // but adding a small "uncertainty" penalty or "risk" penalty for low confidence is safer.
+  // Medium confidence is now NEUTRAL (unknown), so NO penalty.
+
   if (attributes.confidence === 'low') {
-    penalty += 0.35;
-  } else if (attributes.confidence === 'medium') {
-    penalty += 0.15;
+    // If confidence is low (explicit bad tags), the score should already be reflected.
+    // However, we can add a small boost to the penalty to discourage it further.
+    penalty += 0.1;
   }
 
+  // Issue-specific penalties (additive on top of score drop)
+  // These might double-dip since scoreSegment already drops score for these,
+  // but doing it here ensures strong avoidance in the router graph weights.
   const issuePenaltyMap = {
-    kerb_high: 0.3,
-    surface_gravel: 0.25,
-    surface_cobblestone: 0.3,
-    narrow_width: 0.2,
-    steep_incline: 0.35,
+    kerb_high: 0.5, // Increased from 0.3
+    surface_gravel: 0.3,
+    surface_cobblestone: 0.4,
+    narrow_width: 0.3,
+    steep_incline: 0.5,
+    steps: 2.0, // Massive penalty for steps
+    wheelchair_no: 1.0,
   };
+
   issues.forEach((issue) => {
+    // Check if we have a specific penalty for this issue
+    // (aggregator produces snake_case issues like 'wheelchair_no', 'kerb_high', etc.)
     if (issuePenaltyMap[issue]) {
       penalty += issuePenaltyMap[issue];
+    } else if (issue.startsWith('surface_')) {
+      // Generic surface badness
+      penalty += 0.2;
     }
   });
+
   return penalty;
 }
 
@@ -81,8 +102,24 @@ function buildGraph(segments, options = {}) {
 
   const nodes = new Map();
   const nodePositions = new Map();
+  const coordCounts = new Map();
 
-  function addEdge(fromCoord, toCoord, segment, metadata) {
+  // PASS 1: Count coordinate occurrences to identify intersections
+  segments.forEach((segment) => {
+    if (!segment.geometry || segment.geometry.type !== 'LineString') return;
+    const coords = segment.geometry.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) return;
+
+    // We only care about unique coordinates within a single segment for *structure*,
+    // but deeper logic: if a line crosses itself, that's an intersection too.
+    // Simpler: just count every coordinate appearance.
+    coords.forEach((c) => {
+      const key = coordKey(toLatLon(c));
+      coordCounts.set(key, (coordCounts.get(key) || 0) + 1);
+    });
+  });
+
+  function addEdge(fromCoord, toCoord, segmentMeta, edgeMeta) {
     const key = coordKey(fromCoord);
     if (!nodes.has(key)) {
       nodes.set(key, []);
@@ -91,66 +128,97 @@ function buildGraph(segments, options = {}) {
     nodes.get(key).push({
       to: coordKey(toCoord),
       toCoord,
-      weight: metadata.weight,
-      distance: metadata.distance,
-      segment,
+      weight: edgeMeta.weight,
+      distance: edgeMeta.distance,
+      segment: segmentMeta,
     });
   }
 
+  // PASS 2: Build graph, splitting segments at critical nodes (intersections)
   segments.forEach((segment) => {
-    if (!segment.geometry || segment.geometry.type !== 'LineString') {
-      return;
-    }
+    if (!segment.geometry || segment.geometry.type !== 'LineString') return;
     const coords = segment.geometry.coordinates;
-    if (!Array.isArray(coords) || coords.length < 2) {
-      return;
-    }
+    if (!Array.isArray(coords) || coords.length < 2) return;
 
     const attributes = segment.attributes || {};
     const accessible = attributes.is_wheelchair_passable === true;
     const score = attributes.accessibility_score ?? 0.5;
 
     let penaltyMultiplier = 1;
-
     if (!accessible) {
       if (score < limitedThreshold) {
-        // Very high penalty for non-accessible/low-score segments
         penaltyMultiplier = 10;
       } else {
-        // Moderate penalty for limited segments
         penaltyMultiplier = 2.5;
       }
     }
 
-    const pathLatLon = coords.map(toLatLon);
-    const lengthMeters = computeSegmentLengthMeters(coords);
     const penalty = computePenalty(attributes);
-    const weight = lengthMeters * (1 + penalty) * penaltyMultiplier;
     const baseSegmentMeta = {
       id: segment.segment_id || null,
       score,
       accessible,
       confidence: attributes.confidence || 'low',
       issues: attributes.issues || [],
-      weight,
-      length: lengthMeters,
       tags: attributes.tags || {},
     };
 
-    const start = pathLatLon[0];
-    const end = pathLatLon[pathLatLon.length - 1];
-    addEdge(
-      start,
-      end,
-      { ...baseSegmentMeta, path: pathLatLon.slice(), direction: 'forward' },
-      { weight, distance: lengthMeters },
-    );
-    addEdge(
-      end,
-      start,
-      { ...baseSegmentMeta, path: pathLatLon.slice().reverse(), direction: 'reverse' },
-      { weight, distance: lengthMeters },
-    );
+    // Traverse the segment points
+    let startIndex = 0;
+    let currentDistance = 0;
+
+    for (let i = 1; i < coords.length; i++) {
+      const prev = toLatLon(coords[i - 1]);
+      const cur = toLatLon(coords[i]);
+      const dist = haversineDistance(prev, cur);
+      currentDistance += dist;
+
+      const curKey = coordKey(cur);
+      const isEndpoint = i === coords.length - 1;
+      const isIntersection = (coordCounts.get(curKey) || 0) > 1;
+
+      if (isEndpoint || isIntersection) {
+        // Critical Node hit: Create edge from startIndex to i
+        const subSegmentCoords = coords.slice(startIndex, i + 1); // Extract geometry for this specific chunk
+        const pathLatLon = subSegmentCoords.map(toLatLon);
+
+        // Weight for this specific sub-segment
+        const weight = currentDistance * (1 + penalty) * penaltyMultiplier;
+
+        const startCoord = pathLatLon[0];
+        const endCoord = pathLatLon[pathLatLon.length - 1];
+
+        // Forward Edge
+        addEdge(
+          startCoord,
+          endCoord,
+          {
+            ...baseSegmentMeta,
+            path: pathLatLon.slice(),
+            direction: 'forward',
+            length: currentDistance
+          },
+          { weight, distance: currentDistance }
+        );
+
+        // Reverse Edge
+        addEdge(
+          endCoord,
+          startCoord,
+          {
+            ...baseSegmentMeta,
+            path: pathLatLon.slice().reverse(),
+            direction: 'reverse',
+            length: currentDistance
+          },
+          { weight, distance: currentDistance }
+        );
+
+        // Reset for next sub-segment
+        startIndex = i;
+        currentDistance = 0;
+      }
+    }
   });
 
   return { nodes, nodePositions };
@@ -306,11 +374,92 @@ function dijkstra(graph, startKey, endKey) {
  * @param {[number, number]} endLatLon [lat, lon]
  * @param {object} options
  */
+function injectPointIntoSegments(latLon, segments) {
+  const [lat, lon] = latLon;
+  const point = [lat, lon];
+  let minDistanceSq = Infinity;
+  let closestSegmentIndex = -1;
+  let closestProjected = null;
+  let splitIndex = -1;
+
+  // Find closest segment and point
+  segments.forEach((seg, index) => {
+    if (!seg.geometry || seg.geometry.type !== 'LineString') return;
+    const coords = seg.geometry.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) return;
+
+    for (let i = 1; i < coords.length; i++) {
+      // geometry.coordinates are [lon, lat]
+      const p1 = [coords[i - 1][1], coords[i - 1][0]];
+      const p2 = [coords[i][1], coords[i][0]];
+      const proj = projectPointOnSegment(point, p1, p2);
+      const dSq = distanceSquared(point, proj);
+
+      if (dSq < minDistanceSq) {
+        minDistanceSq = dSq;
+        closestSegmentIndex = index;
+        closestProjected = proj;
+        splitIndex = i;
+      }
+    }
+  });
+
+  if (closestSegmentIndex !== -1 && closestProjected) {
+    const originalSeg = segments[closestSegmentIndex];
+    const coords = originalSeg.geometry.coordinates;
+    // Note: Coordinates are [lon, lat]
+    const newCoord = [closestProjected[1], closestProjected[0]];
+
+    // Split into two segments
+    const coords1 = [...coords.slice(0, splitIndex), newCoord];
+    const coords2 = [newCoord, ...coords.slice(splitIndex)];
+
+    const seg1 = {
+      ...originalSeg,
+      segment_id: `${originalSeg.segment_id}_split_1`,
+      geometry: { ...originalSeg.geometry, coordinates: coords1 }
+    };
+    const seg2 = {
+      ...originalSeg,
+      segment_id: `${originalSeg.segment_id}_split_2`,
+      geometry: { ...originalSeg.geometry, coordinates: coords2 }
+    };
+
+    // Replace original segment with the two new ones
+    segments.splice(closestSegmentIndex, 1, seg1, seg2);
+
+    return closestProjected; // [lat, lon]
+  }
+  return null;
+}
+
+
+/**
+ * Finds an accessible walking route between two coordinates.
+ * @param {[number, number]} startLatLon [lat, lon]
+ * @param {[number, number]} endLatLon [lat, lon]
+ * @param {object} options
+ */
 function findAccessibleWalkingRoute(startLatLon, endLatLon, options = {}) {
-  const segments = loadAccessibleSegments(options.accessibleSegmentsPath);
+  // Deep clone segments to avoid mutating the cached/singleton data if any
+  const rawSegments = loadAccessibleSegments(options.accessibleSegmentsPath);
+  // We must clone because we inject points now
+  const segments = JSON.parse(JSON.stringify(rawSegments));
+
+  // Inject start and end points
+  // We prefer the projected point for the result logic
+  const snaptStart = injectPointIntoSegments(startLatLon, segments);
+  const snapEnd = injectPointIntoSegments(endLatLon, segments);
+
+  // If injection fails (too far?), we fall back to original search, but likely graph building will handle it or fail as before.
+  const routeStart = snaptStart || startLatLon;
+  const routeEnd = snapEnd || endLatLon;
+
   const graph = buildGraph(segments, options);
-  const start = findNearestNode(startLatLon, graph.nodePositions);
-  const end = findNearestNode(endLatLon, graph.nodePositions);
+
+  // Use the projected points to find nearest node - they should be EXACT matches now
+  const start = findNearestNode(routeStart, graph.nodePositions);
+  const end = findNearestNode(routeEnd, graph.nodePositions);
 
   if (!start.key || !end.key) {
     throw new Error('Unable to project start or end coordinate onto the accessible network.');
