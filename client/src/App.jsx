@@ -4,7 +4,6 @@ import Header from "./components/Header";
 import RecommendedPanel from "./components/RecommendedPanel";
 import DestinationPanel from "./components/DestinationPanel";
 import DirectionsPanel from "./components/DirectionsPanel";
-import FloatingActionButton from "./components/FloatingActionButton";
 import Logo from "./components/Logo";
 import { planWalkingRoute } from "./services/api";
 import "./index.css";
@@ -58,9 +57,7 @@ function App() {
     }
   };
 
-  const handleReviewClick = () => {
-    alert("Review feature coming soon!");
-  };
+
 
   const handleDestinationSelect = (location, displayName) => {
     // Set as destination
@@ -129,6 +126,8 @@ function App() {
         onCurrentLocationClick={handleCurrentLocationClick}
         onFilterChange={handleFilterChange}
         currentFilter={accessibilityFilter}
+        startLocation={start}
+        endLocation={end}
       />
 
       <div className="map-wrapper">
@@ -142,7 +141,7 @@ function App() {
         />
       </div>
 
-      <RecommendedPanel />
+      <RecommendedPanel onPlaceSelect={handleDestinationSelect} />
 
       {end && (
         <DestinationPanel
@@ -160,7 +159,6 @@ function App() {
         />
       )}
 
-      <FloatingActionButton onClick={handleReviewClick} />
       <Logo />
 
       {error && (

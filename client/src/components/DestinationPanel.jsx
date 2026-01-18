@@ -20,10 +20,6 @@ function DestinationPanel({ destination, start, routeInfo }) {
                 <h2 style={{ fontSize: '1.5rem', fontWeight: '700', marginBottom: '8px' }}>
                     {destination.name || "Selected Destination"}
                 </h2>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-                    <MapPin size={14} />
-                    <span>{destination.lat?.toFixed(4) || 'N/A'}, {destination.lng?.toFixed(4) || 'N/A'}</span>
-                </div>
             </div>
 
             <div style={{
@@ -45,14 +41,8 @@ function DestinationPanel({ destination, start, routeInfo }) {
                 <div style={{ marginBottom: '16px' }}>
                     <label className="label" style={{ marginBottom: '8px' }}>
                         <Navigation size={16} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
-                        Start Point
+                        Start Point: {start.name || 'Selected Location'}
                     </label>
-                    <div className="input" style={{ background: '#f1f5f9', color: 'var(--text-muted)' }}>
-                        {start.lat?.toFixed(4) || 'N/A'}, {start.lng?.toFixed(4) || 'N/A'}
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '4px' }}>
-                        Click on the map to set your starting location
-                    </div>
                 </div>
             )}
 
@@ -61,10 +51,6 @@ function DestinationPanel({ destination, start, routeInfo }) {
                     <div className="data-row">
                         <span className="data-label">Distance</span>
                         <span className="data-value">{distance} km</span>
-                    </div>
-                    <div className="data-row">
-                        <span className="data-label">Accessible coverage</span>
-                        <span className="data-value">{accessibleCoverage}%</span>
                     </div>
                     <div className="data-row">
                         <span className="data-label">Start offset</span>

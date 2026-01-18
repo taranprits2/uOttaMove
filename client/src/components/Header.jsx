@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, MapPin, Filter, User, Loader2, X, Navigation } from "lucide-react";
+import { Search, MapPin, Filter, Loader2, X, Navigation } from "lucide-react";
 import { searchPlaces } from "../services/api";
 
-function Header({ onLocationSelect, onStartLocationSelect, onCurrentLocationClick, onFilterChange, currentFilter }) {
+function Header({ onLocationSelect, onStartLocationSelect, onCurrentLocationClick, onFilterChange, currentFilter, startLocation, endLocation }) {
     const [destinationQuery, setDestinationQuery] = useState("");
     const [startQuery, setStartQuery] = useState("");
     const [destinationResults, setDestinationResults] = useState([]);
@@ -85,17 +85,49 @@ function Header({ onLocationSelect, onStartLocationSelect, onCurrentLocationClic
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
+
     const handleDestinationResultClick = (result) => {
-        const locationName = result.name || result.display_name?.split(',')[0] || "Selected Location";
-        const location = { lat: result.lat, lng: result.lon, name: locationName };
+        // Ensure we have valid coordinates
+        if (!result.lat || (!result.lon && !result.lng)) {
+            console.error('Invalid search result:', result);
+            return;
+        }
+
+        // Extract a proper name - prioritize specific name fields over generic display_name
+        const locationName = result.name ||
+            result.display_name?.split(',')[0]?.trim() ||
+            "Selected Location";
+
+        const location = {
+            lat: parseFloat(result.lat),
+            lng: parseFloat(result.lon || result.lng),
+            name: locationName
+        };
+
         onLocationSelect?.(location, result.display_name);
         setDestinationQuery("");
         setShowDestinationResults(false);
     };
 
+
     const handleStartResultClick = (result) => {
-        const locationName = result.name || result.display_name?.split(',')[0] || "Selected Location";
-        const location = { lat: result.lat, lng: result.lon, name: locationName };
+        // Ensure we have valid coordinates
+        if (!result.lat || (!result.lon && !result.lng)) {
+            console.error('Invalid search result:', result);
+            return;
+        }
+
+        // Extract a proper name - prioritize specific name fields over generic display_name
+        const locationName = result.name ||
+            result.display_name?.split(',')[0]?.trim() ||
+            "Selected Location";
+
+        const location = {
+            lat: parseFloat(result.lat),
+            lng: parseFloat(result.lon || result.lng),
+            name: locationName
+        };
+
         onStartLocationSelect?.(location, result.display_name);
         setStartQuery("");
         setShowStartResults(false);
@@ -144,7 +176,7 @@ function Header({ onLocationSelect, onStartLocationSelect, onCurrentLocationClic
                     <input
                         type="text"
                         className="input"
-                        placeholder="Start location..."
+                        placeholder={startLocation?.name || "Start location..."}
                         value={startQuery}
                         onChange={(e) => setStartQuery(e.target.value)}
                         onFocus={() => startResults.length > 0 && setShowStartResults(true)}
@@ -174,7 +206,7 @@ function Header({ onLocationSelect, onStartLocationSelect, onCurrentLocationClic
                                     className="search-result-item"
                                 >
                                     <div className="search-result-name">
-                                        {result.name || result.display_name?.split(',')[0]}
+                                        {result.display_name?.split(',')[0] || result.name || 'Unknown Location'}
                                     </div>
                                     <div className="search-result-address">
                                         {result.display_name}
@@ -191,7 +223,7 @@ function Header({ onLocationSelect, onStartLocationSelect, onCurrentLocationClic
                     <input
                         type="text"
                         className="input"
-                        placeholder="Search destination..."
+                        placeholder={endLocation?.name || "Search destination..."}
                         value={destinationQuery}
                         onChange={(e) => setDestinationQuery(e.target.value)}
                         onFocus={() => destinationResults.length > 0 && setShowDestinationResults(true)}
@@ -221,7 +253,7 @@ function Header({ onLocationSelect, onStartLocationSelect, onCurrentLocationClic
                                     className="search-result-item"
                                 >
                                     <div className="search-result-name">
-                                        {result.name || result.display_name?.split(',')[0]}
+                                        {result.display_name?.split(',')[0] || result.name || 'Unknown Location'}
                                     </div>
                                     <div className="search-result-address">
                                         {result.display_name}
@@ -281,9 +313,6 @@ function Header({ onLocationSelect, onStartLocationSelect, onCurrentLocationClic
                         </div>
                     )}
                 </div>
-                <button className="icon-btn" title="Profile">
-                    <User size={18} />
-                </button>
             </div>
 
             <style>{`
